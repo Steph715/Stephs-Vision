@@ -1,6 +1,6 @@
 /*
- * NBA 2K26 GPC Script for Titan Two (Alternative Version)
- * Compatible with GTuner IV 1.11
+ * NBA 2K26 GPC Script for Titan Two (Alternative Version, Xbox Controls)
+ * Compatible with GTuner IV 1.11+
  * Uses get_ptime instead of event_press for better compatibility
  * 
  * Features:
@@ -11,13 +11,13 @@
  * - Alley-Oop Helper
  * 
  * Controls:
- * - Hold L1 + R1 + X: Perfect Release Shot
- * - R1 + X: Turbo Shot
- * - L1 + Square: Quick Dribble Combo 1 (Hesitation)
- * - L1 + Triangle: Quick Dribble Combo 2 (Behind the Back)
- * - L1 + Circle: Quick Dribble Combo 3 (Spin Move)
- * - L2 + R2 + Triangle: Alley-Oop
- * - Press R3: Toggle Auto Sprint ON/OFF
+ * - Hold LB + RB + A: Perfect Release Shot
+ * - RB + A: Turbo Shot
+ * - LB + X: Quick Dribble Combo 1 (Hesitation)
+ * - LB + Y: Quick Dribble Combo 2 (Behind the Back)
+ * - LB + B: Quick Dribble Combo 3 (Spin Move)
+ * - LT + RT + Y: Alley-Oop
+ * - Press RS: Toggle Auto Sprint ON/OFF
  */
 
 // Configuration Variables
@@ -27,178 +27,177 @@ int DRIBBLE_COMBO_DELAY = 100;
 int AUTO_SPRINT_ENABLED = TRUE;
 
 // State Variables
-int auto_sprint_toggle;
-int cross_pressed;
-int square_pressed;
-int triangle_pressed;
-int circle_pressed;
-int r3_pressed;
+int auto_sprint_toggle = FALSE;
+int a_pressed = FALSE;
+int x_pressed = FALSE;
+int y_pressed = FALSE;
+int b_pressed = FALSE;
+int rs_pressed = FALSE;
 
-// Main Loop
 main {
     // Perfect Release Timing Assistance
-    if(get_val(PS4_L1) && get_val(PS4_R1)) {
-        if(get_val(PS4_CROSS) && !cross_pressed) {
+    if(get_val(XB1_LB) && get_val(XB1_RB)) {
+        if(get_val(XB1_A) && !a_pressed) {
             combo_run(PerfectRelease);
-            cross_pressed = TRUE;
+            a_pressed = TRUE;
         }
     }
     
     // Turbo Shot (Quick Release)
-    if(get_val(PS4_R1) && !get_val(PS4_L1)) {
-        if(get_val(PS4_CROSS) && !cross_pressed) {
+    if(get_val(XB1_RB) && !get_val(XB1_LB)) {
+        if(get_val(XB1_A) && !a_pressed) {
             combo_run(TurboShot);
-            cross_pressed = TRUE;
+            a_pressed = TRUE;
         }
     }
     
-    // Reset cross button state
-    if(!get_val(PS4_CROSS)) {
-        cross_pressed = FALSE;
+    // Reset A button state
+    if(!get_val(XB1_A)) {
+        a_pressed = FALSE;
     }
     
     // Dribble Combo 1 - Hesitation
-    if(get_val(PS4_L1) && !get_val(PS4_R1)) {
-        if(get_val(PS4_SQUARE) && !square_pressed) {
+    if(get_val(XB1_LB) && !get_val(XB1_RB)) {
+        if(get_val(XB1_X) && !x_pressed) {
             combo_run(DribbleCombo1);
-            square_pressed = TRUE;
+            x_pressed = TRUE;
         }
     }
     
-    // Reset square button state
-    if(!get_val(PS4_SQUARE)) {
-        square_pressed = FALSE;
+    // Reset X button state
+    if(!get_val(XB1_X)) {
+        x_pressed = FALSE;
     }
     
     // Dribble Combo 2 - Behind the Back
-    if(get_val(PS4_L1) && !get_val(PS4_R1)) {
-        if(get_val(PS4_TRIANGLE) && !triangle_pressed && !get_val(PS4_L2) && !get_val(PS4_R2)) {
+    if(get_val(XB1_LB) && !get_val(XB1_RB)) {
+        if(get_val(XB1_Y) && !y_pressed && !get_val(XB1_LT) && !get_val(XB1_RT)) {
             combo_run(DribbleCombo2);
-            triangle_pressed = TRUE;
+            y_pressed = TRUE;
         }
     }
     
     // Dribble Combo 3 - Spin Move
-    if(get_val(PS4_L1) && !get_val(PS4_R1)) {
-        if(get_val(PS4_CIRCLE) && !circle_pressed) {
+    if(get_val(XB1_LB) && !get_val(XB1_RB)) {
+        if(get_val(XB1_B) && !b_pressed) {
             combo_run(DribbleCombo3);
-            circle_pressed = TRUE;
+            b_pressed = TRUE;
         }
     }
     
-    // Reset circle button state
-    if(!get_val(PS4_CIRCLE)) {
-        circle_pressed = FALSE;
+    // Reset B button state
+    if(!get_val(XB1_B)) {
+        b_pressed = FALSE;
     }
     
     // Alley-Oop Helper
-    if(get_val(PS4_L2) && get_val(PS4_R2)) {
-        if(get_val(PS4_TRIANGLE) && !triangle_pressed) {
+    if(get_val(XB1_LT) && get_val(XB1_RT)) {
+        if(get_val(XB1_Y) && !y_pressed) {
             combo_run(AlleyOop);
-            triangle_pressed = TRUE;
+            y_pressed = TRUE;
         }
     }
     
-    // Reset triangle button state
-    if(!get_val(PS4_TRIANGLE)) {
-        triangle_pressed = FALSE;
+    // Reset Y button state
+    if(!get_val(XB1_Y)) {
+        y_pressed = FALSE;
     }
     
     // Auto Sprint Toggle
-    if(get_val(PS4_R3) && !r3_pressed) {
+    if(get_val(XB1_RS) && !rs_pressed) {
         auto_sprint_toggle = !auto_sprint_toggle;
-        r3_pressed = TRUE;
+        rs_pressed = TRUE;
     }
     
-    // Reset R3 button state
-    if(!get_val(PS4_R3)) {
-        r3_pressed = FALSE;
+    // Reset RS button state
+    if(!get_val(XB1_RS)) {
+        rs_pressed = FALSE;
     }
     
     // Apply Auto Sprint
     if(AUTO_SPRINT_ENABLED && auto_sprint_toggle) {
-        if(abs(get_val(PS4_LX)) > 20 || abs(get_val(PS4_LY)) > 20) {
-            set_val(PS4_R2, 100);
+        if(abs(get_val(XB1_LX)) > 20 || abs(get_val(XB1_LY)) > 20) {
+            set_val(XB1_RT, 100);
         }
     }
     
     // Anti-Recoil for Shot Stick
-    if(get_val(PS4_R2) && abs(get_val(PS4_RX)) < 20) {
-        set_val(PS4_RY, get_val(PS4_RY) * 85 / 100);
+    if(get_val(XB1_RT) && abs(get_val(XB1_RX)) < 20) {
+        set_val(XB1_RY, get_val(XB1_RY) * 85 / 100);
     }
 }
 
 // Perfect Release Combo
 combo PerfectRelease {
-    set_val(PS4_CROSS, 100);
+    set_val(XB1_A, 100);
     wait(PERFECT_RELEASE_DELAY);
-    set_val(PS4_CROSS, 0);
+    set_val(XB1_A, 0);
     wait(50);
 }
 
 // Turbo Shot Combo
 combo TurboShot {
-    set_val(PS4_CROSS, 100);
+    set_val(XB1_A, 100);
     wait(TURBO_SHOT_HOLD);
-    set_val(PS4_CROSS, 0);
+    set_val(XB1_A, 0);
     wait(50);
 }
 
 // Dribble Combo 1 - Hesitation Move
 combo DribbleCombo1 {
-    set_val(PS4_RY, 100);
+    set_val(XB1_RY, 100);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RY, 0);
+    set_val(XB1_RY, 0);
     wait(50);
-    set_val(PS4_RY, -100);
+    set_val(XB1_RY, -100);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RY, 0);
+    set_val(XB1_RY, 0);
 }
 
 // Dribble Combo 2 - Behind the Back
 combo DribbleCombo2 {
-    set_val(PS4_RX, -100);
-    set_val(PS4_RY, 50);
+    set_val(XB1_RX, -100);
+    set_val(XB1_RY, 50);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, 0);
-    set_val(PS4_RY, 0);
+    set_val(XB1_RX, 0);
+    set_val(XB1_RY, 0);
     wait(50);
-    set_val(PS4_RX, 100);
+    set_val(XB1_RX, 100);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, 0);
+    set_val(XB1_RX, 0);
 }
 
 // Dribble Combo 3 - Spin Move
 combo DribbleCombo3 {
-    set_val(PS4_RX, 100);
+    set_val(XB1_RX, 100);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, 70);
-    set_val(PS4_RY, 70);
+    set_val(XB1_RX, 70);
+    set_val(XB1_RY, 70);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, 0);
-    set_val(PS4_RY, 100);
+    set_val(XB1_RX, 0);
+    set_val(XB1_RY, 100);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, -70);
-    set_val(PS4_RY, 70);
+    set_val(XB1_RX, -70);
+    set_val(XB1_RY, 70);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, -100);
-    set_val(PS4_RY, 0);
+    set_val(XB1_RX, -100);
+    set_val(XB1_RY, 0);
     wait(DRIBBLE_COMBO_DELAY);
-    set_val(PS4_RX, 0);
-    set_val(PS4_RY, 0);
+    set_val(XB1_RX, 0);
+    set_val(XB1_RY, 0);
 }
 
 // Alley-Oop Helper
 combo AlleyOop {
-    set_val(PS4_L2, 100);
-    set_val(PS4_R2, 100);
-    set_val(PS4_TRIANGLE, 100);
+    set_val(XB1_LT, 100);
+    set_val(XB1_RT, 100);
+    set_val(XB1_Y, 100);
     wait(100);
-    set_val(PS4_TRIANGLE, 0);
+    set_val(XB1_Y, 0);
     wait(50);
-    set_val(PS4_TRIANGLE, 100);
+    set_val(XB1_Y, 100);
     wait(100);
-    set_val(PS4_TRIANGLE, 0);
-    set_val(PS4_L2, 0);
-    set_val(PS4_R2, 0);
+    set_val(XB1_Y, 0);
+    set_val(XB1_LT, 0);
+    set_val(XB1_RT, 0);
 }
