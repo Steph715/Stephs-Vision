@@ -1,0 +1,13 @@
+<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+  <!-- Knit texture pattern -->
+  <rect width="20" height="20" fill="none"/>
+  <!-- Horizontal knit lines -->
+  <path d="M0 5 Q5 3, 10 5 Q15 7, 20 5" stroke="#0a4a28" stroke-width="1.5" fill="none" opacity="0.6"/>
+  <path d="M0 10 Q5 8, 10 10 Q15 12, 20 10" stroke="#0a4a28" stroke-width="1.5" fill="none" opacity="0.6"/>
+  <path d="M0 15 Q5 13, 10 15 Q15 17, 20 15" stroke="#0a4a28" stroke-width="1.5" fill="none" opacity="0.6"/>
+  <!-- Vertical stitches -->
+  <line x1="5" y1="0" x2="5" y2="20" stroke="#0a4a28" stroke-width="0.5" opacity="0.3"/>
+  <line x1="10" y1="0" x2="10" y2="20" stroke="#0a4a28" stroke-width="0.5" opacity="0.3"/>
+  <line x1="15" y1="0" x2="15" y2="20" stroke="#0a4a28" stroke-width="0.5" opacity="0.3"/>
+</svg>
+

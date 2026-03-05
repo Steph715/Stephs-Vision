@@ -1,0 +1,13 @@
+{
+    "Keys": ["Plugins"],
+    "MetaData": {
+        "type": "output",
+        "displayName": "PS Remote Play",
+        "description": "Remote play for Playstation 5 based on chiaki-ng",
+        "author": "Helios Project",
+        "version": "0.0.1",
+        "url": "",
+        "category": "Output",
+        "features": ["controller", "output", "remote"]
+    }
+}

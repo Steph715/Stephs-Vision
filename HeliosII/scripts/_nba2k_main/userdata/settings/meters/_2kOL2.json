@@ -1,0 +1,89 @@
+
+{
+  "training": {
+    "enabled": false,
+    "threshold": 100
+  },
+  "details": {
+    "timer": true,
+    "distance": true,
+    "speed": true,
+    "destination": true,
+    "timing": true,
+    "options": false
+  },
+  "search": {
+    "show": true,
+    "activate": {
+      "button": [16, 21, 22],
+      "val": [100, 65, 65]
+    },
+    "left": 5,
+    "top": 250,
+    "right": 1915,
+    "bottom": 770
+  },
+  "timing": {
+    "value": 40,
+    "shortcut": {
+      "enabled": true,
+      "while": 7,
+      "up": 9,
+      "down": 10
+    },
+    "modifiers": {
+      "button": [],
+      "val": [],
+      "change": []
+    },
+    "lock": false
+  },
+  "result": {
+    "button": [16, 7],
+    "val": [0, 100]
+  },
+  "selections": ["Appearance"],
+  "options": {
+    "Normal": {
+      "bbox": {
+        "left": 11,
+        "top": 11,
+        "right": 11,
+        "bottom": 11
+      },
+      "contour": {
+        "width": {
+          "min": 2,
+          "max": 4
+        },
+        "height": {
+          "min": 34,
+          "max": 249
+        }
+      },
+      "confidence": {
+        "initial": 1.0,
+        "minimum": 0.75,
+        "rate": 0.03
+      },
+      "color": {
+        "White": {
+          "low": [225, 225, 225],
+          "high": [255, 255, 255]
+        }
+      }
+    }
+  },
+  "selected": {
+    "options": "Normal",
+    "color": "White"
+  }
+}
+
+
+
+
+
+
+
+

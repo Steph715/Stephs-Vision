@@ -1,0 +1,23 @@
+Helios uses Qt under the GNU Lesser General Public License (LGPL) version 3.
+
+The full text of the LGPL v3 license can be found at:
+https://www.gnu.org/licenses/lgpl-3.0.html
+
+Qt Source Code
+==============
+The Qt framework source code is available at:
+https://code.qt.io/
+
+For the specific Qt version used in this build, the source code can be obtained from:
+https://download.qt.io/archive/qt/
+
+In accordance with the LGPL v3 license, you have the right to:
+- Use Qt libraries without modifying them in your proprietary application
+- Replace the Qt libraries with modified versions
+- Access the complete Qt source code
+
+This software uses Qt libraries dynamically linked, allowing you to replace them
+with your own modified versions if desired.
+
+For more information about Qt licensing, visit:
+https://www.qt.io/licensing/
