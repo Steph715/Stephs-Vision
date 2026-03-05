@@ -31,14 +31,21 @@ Tesseract OCR is required for feedback reading:
 ## Usage
 
 ```bash
-# With controller connected
-python green_machine.py --port COM3
+# Find your Titan Two port and Elgato device index first
+python green_machine.py --scan-ports
+python green_machine.py --scan-devices
 
-# Dry run (no controller, for tuning)
-python green_machine.py
+# Full setup: Elgato capture + Titan Two auto-detected
+python green_machine.py --capture-device 1
 
-# Full options
-python green_machine.py --port /dev/ttyUSB0 --monitor 1 --fps 60 --offset 0
+# Explicit port
+python green_machine.py --port COM4 --capture-device 1
+
+# Dry run (no controller, just ball tracking)
+python green_machine.py --capture-device 1
+
+# Screen capture fallback (no Elgato)
+python green_machine.py --port COM4 --monitor 1
 ```
 
 ## Tuning
