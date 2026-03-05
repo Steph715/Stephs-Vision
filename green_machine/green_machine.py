@@ -53,9 +53,13 @@ class Config:
     # 2 = slightly more stable
     peak_confirm_frames: int = 1
 
-    # Mediapipe detection/tracking confidence thresholds
-    detection_confidence: float = 0.6
-    tracking_confidence: float = 0.5
+    # Mediapipe detection/tracking confidence thresholds.
+    # 2K hands are rendered, not real — lower values help detection.
+    detection_confidence: float = 0.4
+    tracking_confidence: float = 0.4
+
+    # Show a live debug preview window (slower, use for tuning only)
+    debug: bool = False
 
     # Serial port for Titan Two (None = auto-detect by VID 0x04D8)
     serial_port: Optional[str] = None
@@ -101,6 +105,7 @@ class HandTracker:
     def __init__(self, config: Config):
         self.cfg = config
         self.mp_hands = mp.solutions.hands
+        self.mp_draw = mp.solutions.drawing_utils
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
@@ -109,6 +114,7 @@ class HandTracker:
         )
         self.y_history: deque = deque(maxlen=8)
         self.down_count = 0
+        self._last_result = None   # stored for debug drawing
 
     def find_hand(self, frame: np.ndarray) -> Optional[Tuple[int, int]]:
         """
@@ -116,22 +122,50 @@ class HandTracker:
         or None if no hand is detected.
         """
         rx, ry, rw, rh = self.cfg.hand_roi
-        roi = frame[ry:ry+rh, rx:rx+rw]
 
         # Mediapipe expects RGB
-        rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(frame[ry:ry+rh, rx:rx+rw], cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
         result = self.hands.process(rgb)
+        self._last_result = result
 
         if not result.multi_hand_landmarks:
             return None
 
         lm = result.multi_hand_landmarks[0].landmark[self.cfg.track_landmark]
-
-        # lm.x/y are normalized [0,1] relative to the ROI
         px = int(lm.x * rw) + rx
         py = int(lm.y * rh) + ry
         return px, py
+
+    def draw_debug(self, frame: np.ndarray, tracked_pos: Optional[Tuple[int, int]]) -> np.ndarray:
+        """Return a downscaled debug frame with landmarks and status overlaid."""
+        dbg = frame.copy()
+        rx, ry, rw, rh = self.cfg.hand_roi
+
+        # ROI rectangle
+        cv2.rectangle(dbg, (rx, ry), (rx+rw, ry+rh), (0, 255, 255), 2)
+
+        # Draw hand skeleton if detected
+        if self._last_result and self._last_result.multi_hand_landmarks:
+            for hand_lm in self._last_result.multi_hand_landmarks:
+                # Re-map normalized coords into full-frame pixel space
+                h, w = frame.shape[:2]
+                for lm in hand_lm.landmark:
+                    cx = int(lm.x * rw) + rx
+                    cy = int(lm.y * rh) + ry
+                    cv2.circle(dbg, (cx, cy), 3, (0, 255, 0), -1)
+            # Highlight tracked landmark
+            if tracked_pos:
+                cv2.circle(dbg, tracked_pos, 8, (0, 0, 255), -1)
+                cv2.putText(dbg, f"Y={tracked_pos[1]}", (tracked_pos[0]+10, tracked_pos[1]),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+        status = "HAND DETECTED" if tracked_pos else "no hand"
+        color = (0, 255, 0) if tracked_pos else (0, 0, 255)
+        cv2.putText(dbg, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+
+        # Downscale to 960x540 so it doesn't fill the whole screen
+        return cv2.resize(dbg, (960, 540))
 
     def update(self, py: int) -> bool:
         """
@@ -234,33 +268,6 @@ class Controller:
             print(f"[Controller] Failed to open {port}: {e}")
             self.ser = None
             return False
-
-    def _auto_detect_titan_two(self) -> Optional[str]:
-        """
-        Find Titan Two ports by VID 0x04D8 and try both.
-        The T2 exposes two COM ports — one for Gtuner IV (programming),
-        one for GPC iser() I/O. We try the lower-numbered port first
-        (the GPC I/O port), then fall back to the higher one.
-        """
-        ports = serial.tools.list_ports.comports()
-        candidates = sorted(
-            [p for p in ports if p.vid == self.TITAN_TWO_VID],
-            key=lambda p: p.device,
-        )
-
-        if not candidates:
-            return None
-
-        if len(candidates) == 1:
-            print(f"[Controller] Found Titan Two on {candidates[0].device}")
-            return candidates[0].device
-
-        # Two ports found — try lower first (GPC I/O), then higher (programming)
-        for candidate in candidates:
-            print(f"[Controller] Trying Titan Two port: {candidate.device} ({candidate.description})")
-            if self._open(candidate.device):
-                return None  # Already opened successfully in _open(); signal skip
-        return None
 
     def connect(self) -> bool:
         if self.cfg.serial_port:
@@ -403,6 +410,13 @@ class GreenMachine:
             return
 
         pos = self.tracker.find_hand(frame)
+
+        if self.cfg.debug:
+            dbg = self.tracker.draw_debug(frame, pos)
+            cv2.imshow("Green Machine - Debug", dbg)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                raise KeyboardInterrupt
+
         if pos is None:
             self.tracker.reset()
             self._sleep_remainder(t0, frame_interval)
@@ -471,6 +485,10 @@ if __name__ == '__main__':
     parser.add_argument('--offset', type=int, default=0, help='Initial peak Y offset')
     parser.add_argument('--landmark', type=int, default=12,
                         help='Hand landmark to track (12=middle tip, 0=wrist, 20=pinky tip)')
+    parser.add_argument('--confidence', type=float, default=0.4,
+                        help='Mediapipe detection confidence (0.1-1.0, lower = more permissive)')
+    parser.add_argument('--debug', action='store_true',
+                        help='Show live preview window with hand skeleton overlay')
     parser.add_argument('--scan-ports', action='store_true',
                         help='List serial ports with VID/PID and exit')
     parser.add_argument('--scan-devices', action='store_true',
@@ -492,6 +510,9 @@ if __name__ == '__main__':
         capture_fps=args.fps,
         peak_offset=args.offset,
         track_landmark=args.landmark,
+        detection_confidence=args.confidence,
+        tracking_confidence=args.confidence,
+        debug=args.debug,
     )
 
     GreenMachine(cfg).run()
