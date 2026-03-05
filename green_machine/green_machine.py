@@ -17,11 +17,30 @@ import serial
 import serial.tools.list_ports
 import time
 import re
+import os
+import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import mss
 import pytesseract
+
+
+# ---------------------------------------------------------------------------
+# Mediapipe model bootstrap (new Tasks API, mediapipe >= 0.10.14)
+# ---------------------------------------------------------------------------
+
+_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
+_MODEL_URL  = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+)
+
+def _ensure_model():
+    if not os.path.exists(_MODEL_PATH):
+        print("[HandTracker] Downloading hand_landmarker.task model (~8 MB)...")
+        urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
+        print("[HandTracker] Model saved to", _MODEL_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -97,13 +116,18 @@ class HandTracker:
 
     def __init__(self, config: Config):
         self.cfg = config
-        self._mp_hands = mp.solutions.hands
-        self.hands = self._mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=1,
-            min_detection_confidence=config.detection_confidence,
+        _ensure_model()
+        from mediapipe.tasks import python as _mp_python
+        from mediapipe.tasks.python import vision as _mp_vision
+        base_options = _mp_python.BaseOptions(model_asset_path=_MODEL_PATH)
+        options = _mp_vision.HandLandmarkerOptions(
+            base_options=base_options,
+            num_hands=1,
+            min_hand_detection_confidence=config.detection_confidence,
+            min_hand_presence_confidence=config.detection_confidence,
             min_tracking_confidence=config.tracking_confidence,
         )
+        self._landmarker = _mp_vision.HandLandmarker.create_from_options(options)
         self.y_history: deque = deque(maxlen=8)
         self.down_count = 0
         self.last_result = None
@@ -112,13 +136,13 @@ class HandTracker:
         """Returns pixel (x, y) of the tracked landmark, or None."""
         rx, ry, rw, rh = self.cfg.hand_roi
         rgb = cv2.cvtColor(frame[ry:ry+rh, rx:rx+rw], cv2.COLOR_BGR2RGB)
-        rgb.flags.writeable = False
-        self.last_result = self.hands.process(rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        self.last_result = self._landmarker.detect(mp_image)
 
-        if not self.last_result.multi_hand_landmarks:
+        if not self.last_result.hand_landmarks:
             return None
 
-        lm = self.last_result.multi_hand_landmarks[0].landmark[self.cfg.track_landmark]
+        lm = self.last_result.hand_landmarks[0][self.cfg.track_landmark]
         return int(lm.x * rw) + rx, int(lm.y * rh) + ry
 
     def update(self, py: int) -> bool:
@@ -137,7 +161,7 @@ class HandTracker:
         self.down_count = 0
 
     def close(self):
-        self.hands.close()
+        self._landmarker.close()
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +309,9 @@ def render_window(frame: np.ndarray,
     )
 
     # --- Hand landmark dots ---
-    if tracker.last_result and tracker.last_result.multi_hand_landmarks:
-        for hand_lm in tracker.last_result.multi_hand_landmarks:
-            for lm in hand_lm.landmark:
+    if tracker.last_result and tracker.last_result.hand_landmarks:
+        for hand_lm in tracker.last_result.hand_landmarks:
+            for lm in hand_lm:
                 cx = int(lm.x * rw * scale_x + rx * scale_x)
                 cy = int(lm.y * rh * scale_y + ry * scale_y)
                 cv2.circle(disp, (cx, cy), 3, (0, 200, 0), -1)
