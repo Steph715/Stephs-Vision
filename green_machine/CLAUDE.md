@@ -1,21 +1,29 @@
 # Green Machine - Project Context for Claude
 
 ## What this is
-Ball-peak shot release assistant for NBA 2K. Tracks the basketball's Y position
-frame-by-frame using OpenCV HSV color filtering. When the ball reaches its peak
-arc height, it sends a release command to the controller over serial.
+Hand-peak shot release assistant for NBA 2K. Tracks the shooting hand's Y position
+frame-by-frame using Mediapipe Hand Landmarks. When the hand reaches its peak arc
+height (wrist snap point), it sends a release command to the Titan Two over serial.
+
+No color dependency — works across every arena, ball skin, jersey, and lighting
+because it tracks the hand skeleton, not pixels.
 
 ## Architecture
 - **green_machine.py** — single self-contained Python file, no remote downloads
-- **No compiled extensions** — pure Python + OpenCV + pyserial
 - **No obfuscated code** — everything is readable and modifiable
 
 ## Key classes
 - `Config` — all tunable parameters in one dataclass
-- `BallTracker` — HSV masking → contour detection → Y-position history → peak detection
+- `HandTracker` — Mediapipe Hands → landmark Y-position history → peak detection
 - `FeedbackReader` — OCR (pytesseract) reads Early/Late/Green text post-shot
-- `Controller` — serial writes to hardware controller
+- `Controller` — serial writes to Titan Two with VID/PID auto-detection
 - `GreenMachine` — main loop wiring everything together
+
+## Tracked landmark
+Default is landmark 12 (middle fingertip — highest point at full extension).
+- `--landmark 12` = middle fingertip (default, fires latest)
+- `--landmark 0`  = wrist (fires earlier, more conservative)
+- `--landmark 20` = pinky tip
 
 ## Titan Two GPC companion script
 
@@ -48,8 +56,10 @@ Load this via Gtuner IV → Script → Build & Run, then run `green_machine.py`.
 
 ## Titan Two port detection
 The Titan Two shows up as USB VID 0x04D8 (Microchip / ConsoleTuner).
-Auto-detection picks the highest-numbered COM port with that VID.
+It exposes two COM ports — auto-detection tries the lower-numbered one first
+(GPC iser() I/O port), then falls back to the higher one (programming port).
 Run `python green_machine.py --scan-ports` to see all ports and confirm.
+If auto-detect picks the wrong one, pass `--port COM4` explicitly.
 
 ## Elgato HD60 S+ setup
 The Elgato shows up as a VideoCapture device. Run:

@@ -1,25 +1,28 @@
 """
-Green Machine - Ball Peak Tracker for NBA 2K
+Green Machine - Hand Peak Tracker for NBA 2K
 =============================================
-Tracks the basketball's Y position frame-by-frame using HSV color filtering.
-When the ball reaches its peak (stops going up), fires the shot release.
-No timing guesswork - triggers on the actual physical release point.
+Tracks the shooting hand's Y position using Mediapipe Hand Landmarks.
+When the hand reaches its peak arc — the moment before the wrist snap —
+fires the shot release via the Titan Two controller.
+
+No color dependency. Works across every arena, ball skin, jersey, and
+court lighting because it tracks the hand skeleton, not pixels.
 
 Hardware: Titan Two connected via USB (ConsoleTuner VID 0x04D8)
-Capture:  Elgato HD60 S+ (or any capture card) via cv2.VideoCapture,
-          or screen capture via mss as fallback.
+Capture:  Elgato HD60 S+ via cv2.VideoCapture, or mss screen capture.
 
 Titan Two GPC companion script required on device (see CLAUDE.md).
 """
 
 import cv2
 import numpy as np
+import mediapipe as mp
 import serial
 import serial.tools.list_ports
 import time
 import re
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Tuple
 import mss
 import pytesseract
@@ -31,105 +34,111 @@ import pytesseract
 
 @dataclass
 class Config:
-    # ROI for ball tracking (x, y, width, height) - tune to your setup
-    ball_roi: Tuple[int, int, int, int] = (400, 100, 500, 600)
+    # ROI for hand tracking (x, y, width, height) — crop to shooting arm area
+    # Narrowing this improves speed and avoids tracking the defender's hand.
+    # (0, 0, 1920, 1080) = full frame, safe default
+    hand_roi: Tuple[int, int, int, int] = (0, 0, 1920, 1080)
+
+    # Which hand landmark to track for peak detection.
+    # 12 = middle fingertip (highest point at full extension)
+    # 0  = wrist (a bit lower, fires slightly earlier)
+    # 20 = pinky tip
+    track_landmark: int = 12
 
     # ROI for shot feedback text (Early / Late / Green)
     feedback_roi: Tuple[int, int, int, int] = (550, 650, 300, 80)
 
-    # HSV range for basketball (orange/brown) - tweak per arena/lighting
-    hsv_lower: Tuple[int, int, int] = (5, 100, 100)
-    hsv_upper: Tuple[int, int, int] = (25, 255, 255)
-
-    # Minimum ball contour area to consider a valid detection (px²)
-    min_ball_area: int = 200
-
-    # How many frames the ball must be moving down before triggering
-    # 1 = trigger immediately at first downward frame (fastest)
-    # 2-3 = slightly more stable, small extra delay
+    # How many consecutive frames the hand must be moving DOWN before triggering.
+    # 1 = fastest (fire on first downward frame)
+    # 2 = slightly more stable
     peak_confirm_frames: int = 1
+
+    # Mediapipe detection/tracking confidence thresholds
+    detection_confidence: float = 0.6
+    tracking_confidence: float = 0.5
 
     # Serial port for Titan Two (None = auto-detect by VID 0x04D8)
     serial_port: Optional[str] = None
-    # Titan Two programming port baud rate
+    # Titan Two baud rate — 9600 is the GPC iser() default
     baud_rate: int = 9600
 
-    # Single byte command sent to Titan Two GPC script to fire release.
+    # Single byte sent to Titan Two GPC script to fire release.
     # Must match the value read by iser() in the companion GPC script.
-    release_button: bytes = b'\x58'  # 0x58 = arbitrary trigger byte
+    release_button: bytes = b'\x58'  # 0x58 = trigger byte
 
-    # Duration to hold the release button (seconds)
+    # How long to hold the release signal (seconds)
     release_duration: float = 0.05
 
-    # Peak trigger Y-offset adjustment (pixels, + = trigger later/lower)
-    # Shifts in response to Early/Late feedback
+    # Peak trigger Y-offset (pixels). Auto-adjusted by Early/Late feedback.
+    # Positive = trigger later (hand must drop further before firing)
     peak_offset: int = 0
 
-    # How much to shift offset per feedback event
+    # How much Early/Late shifts the offset per shot
     offset_step: int = 3
 
-    # Elgato / capture card device index for cv2.VideoCapture.
-    # None = use mss screen capture instead (slower, display only).
-    # 0, 1, 2 ... = VideoCapture device index (run --scan-devices to find it).
+    # Elgato/capture card device index for cv2.VideoCapture.
+    # None = use mss screen capture (display only, no capture card).
+    # Run --scan-devices to find the right index.
     capture_device: Optional[int] = None
 
-    # Capture monitor index (used only when capture_device is None)
+    # Monitor index used only when capture_device is None (mss fallback)
     monitor_index: int = 1
 
-    # Target frame rate for capture loop
+    # Target frame rate
     capture_fps: int = 60
 
 
 # ---------------------------------------------------------------------------
-# Ball Tracker
+# Hand Tracker
 # ---------------------------------------------------------------------------
 
-class BallTracker:
-    """Tracks basketball Y position and detects the peak of the arc."""
+class HandTracker:
+    """
+    Tracks the shooting hand Y position using Mediapipe Hand Landmarks.
+    Detects peak: moment the tracked landmark stops rising and starts falling.
+    """
 
     def __init__(self, config: Config):
         self.cfg = config
-        self.lower = np.array(config.hsv_lower, dtype=np.uint8)
-        self.upper = np.array(config.hsv_upper, dtype=np.uint8)
-        self.y_history: deque = deque(maxlen=10)
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=config.detection_confidence,
+            min_tracking_confidence=config.tracking_confidence,
+        )
+        self.y_history: deque = deque(maxlen=8)
         self.down_count = 0
 
-    def find_ball(self, frame: np.ndarray) -> Optional[Tuple[int, int]]:
-        """Returns (cx, cy) of ball centroid in frame coordinates, or None."""
-        x, y, w, h = self.cfg.ball_roi
-        roi = frame[y:y+h, x:x+w]
-
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lower, self.upper)
-
-        # Clean up noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        # Take the largest contour
-        largest = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest) < self.cfg.min_ball_area:
-            return None
-
-        M = cv2.moments(largest)
-        if M['m00'] == 0:
-            return None
-
-        cx = int(M['m10'] / M['m00']) + x
-        cy = int(M['m01'] / M['m00']) + y
-        return cx, cy
-
-    def update(self, cy: int) -> bool:
+    def find_hand(self, frame: np.ndarray) -> Optional[Tuple[int, int]]:
         """
-        Feed the current ball Y position.
-        Returns True when peak is detected (trigger moment).
+        Returns pixel (x, y) of the tracked landmark in frame coordinates,
+        or None if no hand is detected.
         """
-        self.y_history.append(cy)
+        rx, ry, rw, rh = self.cfg.hand_roi
+        roi = frame[ry:ry+rh, rx:rx+rw]
+
+        # Mediapipe expects RGB
+        rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+        rgb.flags.writeable = False
+        result = self.hands.process(rgb)
+
+        if not result.multi_hand_landmarks:
+            return None
+
+        lm = result.multi_hand_landmarks[0].landmark[self.cfg.track_landmark]
+
+        # lm.x/y are normalized [0,1] relative to the ROI
+        px = int(lm.x * rw) + rx
+        py = int(lm.y * rh) + ry
+        return px, py
+
+    def update(self, py: int) -> bool:
+        """
+        Feed current hand Y position.
+        Returns True when peak is detected (trigger now).
+        """
+        self.y_history.append(py)
 
         if len(self.y_history) < 2:
             return False
@@ -137,8 +146,8 @@ class BallTracker:
         prev_y = self.y_history[-2]
         curr_y = self.y_history[-1]
 
-        # In screen coords Y increases downward, so ball going UP = decreasing Y
-        # Peak = ball was going up and is now going down (curr_y > prev_y)
+        # Screen Y increases downward — hand going UP = decreasing Y.
+        # Peak = hand was rising and is now falling (curr_y > prev_y + offset).
         if curr_y > prev_y + self.cfg.peak_offset:
             self.down_count += 1
         else:
@@ -150,13 +159,16 @@ class BallTracker:
         self.y_history.clear()
         self.down_count = 0
 
+    def close(self):
+        self.hands.close()
+
 
 # ---------------------------------------------------------------------------
 # Feedback Reader
 # ---------------------------------------------------------------------------
 
 class FeedbackReader:
-    """Reads Early/Late/Green text from the screen after each shot."""
+    """Reads Early / Late / Green text from the screen after each shot."""
 
     PATTERN = re.compile(r'\b(early|late|green|slightly early|slightly late)\b', re.IGNORECASE)
 
@@ -167,7 +179,6 @@ class FeedbackReader:
         x, y, w, h = self.cfg.feedback_roi
         roi = frame[y:y+h, x:x+w]
 
-        # Upscale for better OCR accuracy
         roi_up = cv2.resize(roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(roi_up, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
@@ -178,13 +189,13 @@ class FeedbackReader:
 
 
 # ---------------------------------------------------------------------------
-# Controller
+# Controller (Titan Two)
 # ---------------------------------------------------------------------------
 
 class Controller:
-    """Sends button commands to the Titan Two over serial."""
+    """Sends the release command to the Titan Two over serial."""
 
-    # ConsoleTuner (Titan Two) USB vendor ID
+    # ConsoleTuner USB vendor ID
     TITAN_TWO_VID = 0x04D8
 
     def __init__(self, config: Config):
@@ -194,56 +205,101 @@ class Controller:
     def connect(self) -> bool:
         port = self.cfg.serial_port or self._auto_detect_titan_two()
         if not port:
-            print("[Controller] Titan Two not found. Run --scan-ports to list devices.")
+            print("[Controller] Titan Two not found. Run --scan-ports to see all ports.")
             print("[Controller] Running in DRY RUN mode.")
             return False
+        return self._open(port)
+
+    def _open(self, port: str) -> bool:
         try:
             self.ser = serial.Serial(
                 port,
                 self.cfg.baud_rate,
                 timeout=1,
                 write_timeout=1,
+                # Disable hardware flow control — T2 doesn't use it and
+                # some drivers will hold the port locked without this.
+                rtscts=False,
+                dsrdtr=False,
             )
-            # Brief settle after open — Titan Two resets on DTR
-            time.sleep(0.1)
+            # Pull RTS/DTR low so the T2 doesn't reset on connect
+            self.ser.rts = False
+            self.ser.dtr = False
+            time.sleep(0.15)
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
             print(f"[Controller] Titan Two connected on {port} @ {self.cfg.baud_rate} baud")
             return True
         except serial.SerialException as e:
             print(f"[Controller] Failed to open {port}: {e}")
-            print("[Controller] Running in DRY RUN mode.")
+            self.ser = None
             return False
 
     def _auto_detect_titan_two(self) -> Optional[str]:
-        """Find the Titan Two by USB VID (0x04D8). Returns the programming port."""
+        """
+        Find Titan Two ports by VID 0x04D8 and try both.
+        The T2 exposes two COM ports — one for Gtuner IV (programming),
+        one for GPC iser() I/O. We try the lower-numbered port first
+        (the GPC I/O port), then fall back to the higher one.
+        """
         ports = serial.tools.list_ports.comports()
-        candidates = [p for p in ports if p.vid == self.TITAN_TWO_VID]
+        candidates = sorted(
+            [p for p in ports if p.vid == self.TITAN_TWO_VID],
+            key=lambda p: p.device,
+        )
 
         if not candidates:
             return None
 
-        # Titan Two exposes two COM ports; the higher-numbered one is typically
-        # the programming/data port used for GPC serial I/O.
-        candidates.sort(key=lambda p: p.device)
-        chosen = candidates[-1]
-        print(f"[Controller] Auto-detected Titan Two: {chosen.device} ({chosen.description})")
-        return chosen.device
+        if len(candidates) == 1:
+            print(f"[Controller] Found Titan Two on {candidates[0].device}")
+            return candidates[0].device
+
+        # Two ports found — try lower first (GPC I/O), then higher (programming)
+        for candidate in candidates:
+            print(f"[Controller] Trying Titan Two port: {candidate.device} ({candidate.description})")
+            if self._open(candidate.device):
+                return None  # Already opened successfully in _open(); signal skip
+        return None
+
+    def connect(self) -> bool:
+        if self.cfg.serial_port:
+            return self._open(self.cfg.serial_port)
+
+        ports = serial.tools.list_ports.comports()
+        candidates = sorted(
+            [p for p in ports if p.vid == self.TITAN_TWO_VID],
+            key=lambda p: p.device,
+        )
+
+        if not candidates:
+            print("[Controller] Titan Two not found. Run --scan-ports to see all ports.")
+            print("[Controller] Running in DRY RUN mode.")
+            return False
+
+        # Try each T2 port until one opens — lower-numbered is GPC I/O port
+        for candidate in candidates:
+            print(f"[Controller] Trying {candidate.device} ({candidate.description}) ...")
+            if self._open(candidate.device):
+                return True
+
+        print("[Controller] All Titan Two ports failed. Running in DRY RUN mode.")
+        return False
 
     @staticmethod
     def scan_ports():
-        """Print all available serial ports with VID/PID. Use to find Titan Two port."""
+        """List all serial ports with VID/PID. Titan Two marked with arrow."""
         ports = serial.tools.list_ports.comports()
         if not ports:
             print("No serial ports found.")
             return
         print(f"{'Device':<15} {'VID':<8} {'PID':<8} Description")
-        print("-" * 60)
+        print("-" * 65)
         for p in ports:
             vid = hex(p.vid) if p.vid else "None"
             pid = hex(p.pid) if p.pid else "None"
-            titan = " <-- Titan Two" if p.vid == 0x04D8 else ""
-            print(f"{p.device:<15} {vid:<8} {pid:<8} {p.description}{titan}")
+            tag = " <-- Titan Two" if p.vid == 0x04D8 else ""
+            print(f"{p.device:<15} {vid:<8} {pid:<8} {p.description}{tag}")
 
     def release_shot(self):
         if self.ser and self.ser.is_open:
@@ -252,7 +308,7 @@ class Controller:
                 self.ser.flush()
                 time.sleep(self.cfg.release_duration)
             except serial.SerialException as e:
-                print(f"[Controller] Write failed: {e}")
+                print(f"[Controller] Write error: {e}")
         else:
             print("[DRY RUN] Shot released")
 
@@ -268,46 +324,45 @@ class Controller:
 class GreenMachine:
     def __init__(self, config: Config = None):
         self.cfg = config or Config()
-        self.tracker = BallTracker(self.cfg)
+        self.tracker = HandTracker(self.cfg)
         self.feedback = FeedbackReader(self.cfg)
         self.controller = Controller(self.cfg)
         self.shot_count = 0
         self.green_count = 0
-        self.triggered = False
         self.trigger_cooldown = 0
 
     def run(self):
         self.controller.connect()
 
         frame_interval = 1.0 / self.cfg.capture_fps
+        print("[Green Machine] Running — tracking hand peak. Ctrl+C to stop.")
+        print(f"[Green Machine] Landmark: {self.cfg.track_landmark}  "
+              f"Peak offset: {self.cfg.peak_offset}px")
 
-        print("[Green Machine] Running. Press Ctrl+C to stop.")
-        print(f"[Green Machine] Peak offset: {self.cfg.peak_offset}px")
-
-        if self.cfg.capture_device is not None:
-            self._run_capture_card(frame_interval)
-        else:
-            self._run_screen_capture(frame_interval)
+        try:
+            if self.cfg.capture_device is not None:
+                self._run_capture_card(frame_interval)
+            else:
+                self._run_screen_capture(frame_interval)
+        finally:
+            self.tracker.close()
 
     def _run_capture_card(self, frame_interval: float):
-        """Capture from Elgato or any VideoCapture device."""
         cap = cv2.VideoCapture(self.cfg.capture_device, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            # CAP_DSHOW is Windows-only; fall back to default backend
             cap = cv2.VideoCapture(self.cfg.capture_device)
         if not cap.isOpened():
-            print(f"[Capture] Could not open device {self.cfg.capture_device}. "
-                  f"Run --scan-devices to list available capture devices.")
+            print(f"[Capture] Cannot open device {self.cfg.capture_device}. "
+                  "Run --scan-devices to list available devices.")
             self.controller.close()
             return
 
-        # Request native resolution from Elgato (1080p)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         cap.set(cv2.CAP_PROP_FPS, self.cfg.capture_fps)
-        print(f"[Capture] Elgato device {self.cfg.capture_device} opened  "
+        print(f"[Capture] Device {self.cfg.capture_device}  "
               f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
-              f"{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
+              f"{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}  "
               f"@ {int(cap.get(cv2.CAP_PROP_FPS))}fps")
 
         try:
@@ -320,28 +375,25 @@ class GreenMachine:
                     continue
                 self._process_frame(frame, t0, frame_interval)
         except KeyboardInterrupt:
-            print(f"\n[Green Machine] Stopped. {self.green_count}/{self.shot_count} greens.")
+            print(f"\n[Green Machine] Done. {self.green_count}/{self.shot_count} greens.")
         finally:
             cap.release()
             self.controller.close()
 
     def _run_screen_capture(self, frame_interval: float):
-        """Capture from the display using mss (fallback when no capture card)."""
         with mss.mss() as sct:
             monitor = sct.monitors[self.cfg.monitor_index]
             try:
                 while True:
                     t0 = time.perf_counter()
-                    raw = sct.grab(monitor)
-                    frame = cv2.cvtColor(np.array(raw), cv2.COLOR_BGRA2BGR)
+                    frame = cv2.cvtColor(np.array(sct.grab(monitor)), cv2.COLOR_BGRA2BGR)
                     self._process_frame(frame, t0, frame_interval)
             except KeyboardInterrupt:
-                print(f"\n[Green Machine] Stopped. {self.green_count}/{self.shot_count} greens.")
+                print(f"\n[Green Machine] Done. {self.green_count}/{self.shot_count} greens.")
             finally:
                 self.controller.close()
 
     def _process_frame(self, frame: np.ndarray, t0: float, frame_interval: float):
-        """Core per-frame logic shared by both capture paths."""
         if self.trigger_cooldown > 0:
             self.trigger_cooldown -= 1
             result = self.feedback.read(frame)
@@ -350,42 +402,36 @@ class GreenMachine:
             self._sleep_remainder(t0, frame_interval)
             return
 
-        pos = self.tracker.find_ball(frame)
+        pos = self.tracker.find_hand(frame)
         if pos is None:
             self.tracker.reset()
             self._sleep_remainder(t0, frame_interval)
             return
 
-        cx, cy = pos
-        if self.tracker.update(cy):
+        _, py = pos
+        if self.tracker.update(py):
             self.controller.release_shot()
             self.shot_count += 1
             self.tracker.reset()
             self.trigger_cooldown = 90
-            print(f"[Shot #{self.shot_count}] Released at Y={cy}  offset={self.cfg.peak_offset}")
+            print(f"[Shot #{self.shot_count}] Hand peak at Y={py}  offset={self.cfg.peak_offset}")
 
         self._sleep_remainder(t0, frame_interval)
 
     def _apply_feedback(self, result: str):
-        """Shift the peak trigger offset based on shot feedback."""
-        self.shot_count  # already incremented at trigger
-
         if 'green' in result:
             self.green_count += 1
-            print(f"  -> GREEN  ({self.green_count} total) offset={self.cfg.peak_offset}")
+            print(f"  -> GREEN  ({self.green_count} total)")
         elif 'early' in result:
-            # Released too early = ball hadn't peaked yet = trigger later (raise offset)
             self.cfg.peak_offset += self.cfg.offset_step
-            print(f"  -> EARLY  offset adjusted to {self.cfg.peak_offset}")
+            print(f"  -> EARLY  offset -> {self.cfg.peak_offset}")
         elif 'late' in result:
-            # Released too late = ball past peak = trigger sooner (lower offset)
             self.cfg.peak_offset -= self.cfg.offset_step
-            print(f"  -> LATE   offset adjusted to {self.cfg.peak_offset}")
+            print(f"  -> LATE   offset -> {self.cfg.peak_offset}")
 
     @staticmethod
     def _sleep_remainder(t0: float, interval: float):
-        elapsed = time.perf_counter() - t0
-        remaining = interval - elapsed
+        remaining = interval - (time.perf_counter() - t0)
         if remaining > 0:
             time.sleep(remaining)
 
@@ -395,7 +441,7 @@ class GreenMachine:
 # ---------------------------------------------------------------------------
 
 def scan_capture_devices(max_index: int = 10):
-    """Print available VideoCapture devices (cameras, capture cards, etc.)."""
+    """List VideoCapture devices (capture cards, webcams, etc.)."""
     print("Scanning VideoCapture devices...")
     found = []
     for i in range(max_index):
@@ -416,18 +462,19 @@ def scan_capture_devices(max_index: int = 10):
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='Green Machine - Ball Peak Shot Releaser')
+    parser = argparse.ArgumentParser(description='Green Machine — Hand Peak Shot Releaser')
     parser.add_argument('--port', help='Titan Two serial port (e.g. COM3). Auto-detected if omitted.')
     parser.add_argument('--capture-device', type=int, default=None,
-                        help='Elgato/capture card device index (from --scan-devices). '
-                             'Omit to use screen capture.')
+                        help='Elgato device index (from --scan-devices). Omit for screen capture.')
     parser.add_argument('--monitor', type=int, default=1, help='Monitor index (screen capture only)')
     parser.add_argument('--fps', type=int, default=60, help='Capture frame rate')
     parser.add_argument('--offset', type=int, default=0, help='Initial peak Y offset')
+    parser.add_argument('--landmark', type=int, default=12,
+                        help='Hand landmark to track (12=middle tip, 0=wrist, 20=pinky tip)')
     parser.add_argument('--scan-ports', action='store_true',
-                        help='List all serial ports with VID/PID and exit')
+                        help='List serial ports with VID/PID and exit')
     parser.add_argument('--scan-devices', action='store_true',
-                        help='List all VideoCapture devices and exit')
+                        help='List VideoCapture devices and exit')
     args = parser.parse_args()
 
     if args.scan_ports:
@@ -444,6 +491,7 @@ if __name__ == '__main__':
         monitor_index=args.monitor,
         capture_fps=args.fps,
         peak_offset=args.offset,
+        track_landmark=args.landmark,
     )
 
     GreenMachine(cfg).run()

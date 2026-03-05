@@ -1,21 +1,22 @@
 # Green Machine
 
-Ball-peak shot release assistant for NBA 2K. No timing meters, no delay calibration.
-It watches where the ball physically is and releases when it hits the peak of the arc.
+Hand-peak shot release assistant for NBA 2K. No timing meters, no delay calibration,
+no ball color dependency. It watches where the shooting hand is and releases when the
+fingertips hit the peak of the arc.
 
 ## How it works
 
-1. Captures your screen at 60fps
-2. Isolates the basketball using HSV color filtering (orange range)
-3. Tracks the ball's Y position frame by frame
-4. When the ball stops going up — peak detected — fires the shot release
-5. Reads Early/Late/Green feedback text via OCR and auto-adjusts the trigger point
+1. Captures from the Elgato capture card (or screen) at 60fps
+2. Runs Mediapipe Hand Landmarks on each frame — tracks the hand skeleton
+3. Monitors the Y position of the middle fingertip (landmark 12) frame by frame
+4. When the hand stops rising — peak detected — fires the shot release to the Titan Two
+5. Reads Early/Late/Green feedback via OCR and auto-adjusts the trigger point
 
-## Why this beats timer-based approaches
+## Why hand tracking beats ball color tracking
 
-Every shot type (quick jumper, slow post fade, hop step) reaches the same physical
-release point — the peak of the arc. A timer fires at a fixed delay regardless of
-shot animation. Ball tracking fires at the actual physics moment, every time.
+Ball color changes per arena (some balls are darker/lighter), per skin tone it blends with,
+and per defender contact. The hand is always the same shape. Mediapipe doesn't care about
+skin tone or lighting — it finds the hand skeleton regardless.
 
 ## Setup
 
