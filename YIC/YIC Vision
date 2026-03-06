@@ -1,0 +1,46 @@
+'''
+
+WELCOME TO
+
+
+____    ____  __    ______
+\   \  /   / |  |  /      |
+ \   \/   /  |  | |  ,----'
+  \_    _/   |  | |  |
+    |  |     |  | |  `----.
+    |__|     |__|  \______|
+
+
+'''
+
+# DO NOT CHANGE ANYTHING IN THIS FILE
+import os
+import sys
+
+
+class GCVWorker:
+    def __init__(self, width, height):
+        os.chdir(os.path.dirname(__file__))
+        self.hp = "yic_helper"
+
+        if not self.hp + '.py' in os.listdir(os.getcwd()):
+            raise Exception("Helper not found. Please place yic_helper.py in the same folder.")
+
+        self.hp = __import__(self.hp)
+        self.hp = self.hp.Helper()
+
+    def __del__(self):
+        del self.hp
+
+    def process(self, frame):
+        return self.hp.run(frame)
+
+    def get_python_version(self):
+        return f"{sys.version_info.major}{sys.version_info.minor}"
+
+
+class Helper:
+    def run(self, frame):
+        # Do processing here
+        print("Running YIC Helper with frame:", frame)
+        return "processed"
